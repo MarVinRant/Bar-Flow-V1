@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { fetchAdminSnapshot, requestPasswordReset, signInWithGoogle, signInWithPassword, type AdminSnapshot } from "../src/lib/supabase";
+import { archivePrivateItem, createOnboarding, fetchPrivateItems, getCurrentEstablishment, getOrCreateMenu, publishMenu, saveEstablishment, savePrivateItem, type BarFlowEstablishment, type BarFlowItem } from "../src/lib/barflow";
 
 type Section = "visao" | "biblioteca" | "acervo" | "cardapio" | "favoritos" | "plano" | "configuracoes";
 type AppMode = "app" | "login" | "onboarding" | "admin";
@@ -36,6 +37,17 @@ export default function Home() {
   const [toast, setToast] = useState("");
   const [published, setPublished] = useState(false);
   const [mode, setMode] = useState<AppMode>("app");
+  const [establishment, setEstablishment] = useState<BarFlowEstablishment | null>(null);
+  const [realItems, setRealItems] = useState<BarFlowItem[]>([]);
+
+  useEffect(() => {
+    getCurrentEstablishment().then(async ({ data }) => {
+      if (!data) return;
+      setEstablishment(data);
+      const result = await fetchPrivateItems(data.id);
+      if (result.data) setRealItems(result.data);
+    });
+  }, []);
 
   const allItems = useMemo(() => [...recipes, ...products], []);
   const results = useMemo(
@@ -49,7 +61,7 @@ export default function Home() {
   }
 
   if (mode === "login") return <AuthScreen onLogin={() => setMode("onboarding")} onBack={() => setMode("app")} />;
-  if (mode === "onboarding") return <OnboardingScreen onComplete={() => setMode("app")} />;
+  if (mode === "onboarding") return <OnboardingScreen onComplete={async (input) => { const result = await createOnboarding(input); if (result.error || !result.data) return notify(result.error?.message ?? "Não foi possível criar o estabelecimento."); setEstablishment(result.data); setMode("app"); notify("Estabelecimento criado com sucesso."); }} />;
   if (mode === "admin") return <RealAdminPanel onBack={() => setMode("app")} onAction={notify} />;
 
   return (
@@ -95,11 +107,11 @@ export default function Home() {
         <div className="content">
           {section === "visao" && <Dashboard onAction={notify} published={published} />}
           {section === "biblioteca" && <Library onAction={notify} />}
-          {section === "acervo" && <Collection onAction={notify} />}
-          {section === "cardapio" && <MenuPage published={published} onPublish={() => { setPublished(true); notify("Cardápio publicado com sucesso."); }} onAction={notify} />}
+          {section === "acervo" && <RealCollection establishment={establishment} realItems={realItems} onItemsChange={setRealItems} onAction={notify} />}
+          {section === "cardapio" && <RealMenuPage establishment={establishment} published={published} onPublished={() => { setPublished(true); notify("Cardápio publicado com sucesso."); }} onAction={notify} />}
           {section === "favoritos" && <EmptyState title="Seus favoritos" copy="Salve receitas, produtos e páginas importantes para encontrar tudo mais rápido." action="Explorar Biblioteca" onAction={() => setSection("biblioteca")} />}
           {section === "plano" && <FrozenCommercialPage onAction={notify} />}
-          {section === "configuracoes" && <Settings onAction={notify} onAdmin={() => setMode("admin")} />}
+          {section === "configuracoes" && <RealSettings establishment={establishment} onEstablishmentChange={setEstablishment} onAction={notify} onAdmin={() => setMode("admin")} />}
         </div>
       </section>
       {toast && <div className="toast"><span>✓</span>{toast}</div>}
@@ -123,8 +135,48 @@ function Library({ onAction }: { onAction: (message: string) => void }) {
   return <div><div className="page-heading"><div><p className="eyebrow">BIBLIOTECA MESTRE</p><h1>Encontre seu próximo <em>favorito.</em></h1><p className="lead">Conteúdo curado pelo Bar Flow para você começar com uma base melhor.</p></div><button className="outline-button" onClick={() => onAction("Sugira uma receita ou produto para nossa curadoria.")}>＋ Sugerir item</button></div><div className="library-toolbar"><div className="tabs">{["Tudo", "Receitas", "Produtos", "Preparos"].map((name) => <button key={name} onClick={() => setTab(name)} className={tab === name ? "tab active" : "tab"}>{name}<span>{name === "Tudo" ? "7" : name === "Receitas" ? "4" : name === "Produtos" ? "3" : "1"}</span></button>)}</div><button className="filter-button">☷ Filtros</button></div><div className="library-grid">{items.map((item) => <LibraryCard key={item.name} item={item} onAction={onAction} />)}</div></div>;
 }
 
+function RealCollection({ establishment, realItems, onItemsChange, onAction }: { establishment: BarFlowEstablishment | null; realItems: BarFlowItem[]; onItemsChange: (items: BarFlowItem[]) => void; onAction: (message: string) => void }) {
+  const [name, setName] = useState("");
+  const [category, setCategory] = useState("Receitas");
+  const [type, setType] = useState<BarFlowItem["item_type"]>("recipe");
+  const [busy, setBusy] = useState(false);
+  async function addItem() {
+    if (!establishment || !name.trim()) return onAction("Informe o nome do item antes de salvar.");
+    setBusy(true);
+    const result = await savePrivateItem({ establishment_id: establishment.id, item_type: type, name: name.trim(), category });
+    setBusy(false);
+    if (result.error || !result.data) return onAction(result.error?.message ?? "Não foi possível salvar o item.");
+    onItemsChange([result.data as BarFlowItem, ...realItems]);
+    setName("");
+    onAction("Item salvo no seu acervo.");
+  }
+  async function archive(id: string) {
+    const result = await archivePrivateItem(id);
+    if (result.error) return onAction(result.error.message);
+    onItemsChange(realItems.filter((item) => item.id !== id));
+    onAction("Item movido para a lixeira.");
+  }
+  return <div><div className="page-heading"><div><p className="eyebrow">MEU ACERVO</p><h1>O que está no seu <em>bar.</em></h1><p className="lead">Itens privados salvos no Supabase do seu estabelecimento.</p></div></div><div className="panel" style={{ padding: 20, marginBottom: 18 }}><div className="panel-heading"><div><h3>Novo item</h3><p>Cadastre uma receita, produto ou preparo.</p></div></div><div className="form-row"><label>Nome<input value={name} onChange={(event) => setName(event.target.value)} placeholder="Ex.: Gin Tônica da Casa" /></label><label>Categoria<input value={category} onChange={(event) => setCategory(event.target.value)} placeholder="Ex.: Clássicos" /></label><label>Tipo<select value={type} onChange={(event) => setType(event.target.value as BarFlowItem["item_type"])}><option value="recipe">Receita</option><option value="product">Produto</option><option value="preparation">Preparo</option></select></label></div><button className="primary-button" disabled={busy} onClick={addItem}>{busy ? "Salvando..." : "Salvar item"}</button></div><div className="collection-summary"><div><span className="summary-icon blue">◒</span><div><strong>{realItems.filter((item) => item.item_type !== "product").length}</strong><small>Receitas e preparos</small></div></div><div><span className="summary-icon gold">▣</span><div><strong>{realItems.filter((item) => item.item_type === "product").length}</strong><small>Produtos cadastrados</small></div></div><div><span className="summary-icon green">☷</span><div><strong>{realItems.length}</strong><small>Itens privados</small></div></div></div><div className="panel collection-panel"><div className="panel-heading"><div><h3>Itens salvos</h3><p>Registros reais do seu estabelecimento.</p></div></div>{realItems.length ? realItems.map((item) => <div className="activity" key={item.id}><span className="activity-icon blue">{item.item_type === "product" ? "▣" : "◒"}</span><div><strong>{item.name}</strong><small>{item.item_type} · {item.category}</small></div><button className="icon-link" onClick={() => archive(item.id)}>Arquivar</button></div>) : <div className="empty-state"><span>☆</span><h2>Seu acervo começa aqui</h2><p>Cadastre o primeiro item usando o formulário acima.</p></div>}</div></div>;
+}
+
 function Collection({ onAction }: { onAction: (message: string) => void }) {
   return <div><div className="page-heading"><div><p className="eyebrow">MEU ACERVO</p><h1>O que está no seu <em>bar.</em></h1><p className="lead">Sua biblioteca privada, feita para a rotina da Casa Caju.</p></div><button className="primary-button" onClick={() => onAction("Escolha entre criar uma receita ou adicionar um produto.")}>＋ Novo item <span>⌄</span></button></div><div className="collection-summary"><div><span className="summary-icon blue">◒</span><div><strong>28</strong><small>Receitas e preparos</small></div></div><div><span className="summary-icon gold">▣</span><div><strong>74</strong><small>Produtos cadastrados</small></div></div><div><span className="summary-icon green">☷</span><div><strong>12</strong><small>Itens no cardápio</small></div></div></div><div className="panel collection-panel"><div className="panel-heading"><div><h3>Itens adicionados recentemente</h3><p>Você pode editar ou adicionar qualquer item ao cardápio.</p></div><button className="icon-link" onClick={() => onAction("Filtros do acervo em breve.")}>Filtrar →</button></div>{[...recipes.slice(0, 3), ...products.slice(0, 1)].map((item) => <Activity key={item.name} icon={item.type === "Produto" ? "▣" : "◒"} title={item.name} desc={item.type + " · " + item.category} time="Editar item  →" tone={item.tone} />)}</div></div>;
+}
+
+function RealMenuPage({ establishment, published, onPublished, onAction }: { establishment: BarFlowEstablishment | null; published: boolean; onPublished: () => void; onAction: (message: string) => void }) {
+  const [busy, setBusy] = useState(false);
+  async function publish() {
+    if (!establishment) return onAction("O estabelecimento ainda não está vinculado a uma sessão real.");
+    setBusy(true);
+    const menu = await getOrCreateMenu(establishment.id);
+    if (menu.error || !menu.data) { setBusy(false); return onAction(menu.error?.message ?? "Não foi possível preparar o cardápio."); }
+    const result = await publishMenu(menu.data.id);
+    setBusy(false);
+    if (result.error) return onAction(result.error.message);
+    onPublished();
+  }
+  const url = establishment ? `${window.location.origin}/${establishment.slug}` : "";
+  return <div><div className="page-heading"><div><p className="eyebrow">MEU CARDÁPIO</p><h1>Apresente o estabelecimento <em>ao mundo.</em></h1><p className="lead">Publique o cardápio real do seu tenant e compartilhe o link.</p></div><button className="primary-button" disabled={busy} onClick={publish}>{busy ? "Publicando..." : published ? "✓ Publicado" : "Publicar cardápio"} <span>→</span></button></div><div className="menu-editor"><div className="menu-preview"><div className="preview-top"><span>bar flow</span><span>•••</span></div><div className="preview-hero"><p>{establishment?.name ?? "SEU ESTABELECIMENTO"}</p><h2>Drinks que<br /><em>contam histórias.</em></h2><small>{establishment?.public_description ?? "Uma seleção autoral para noites leves e encontros longos."}</small></div></div><div className="menu-settings"><div className="panel-heading"><div><h3>{published ? "Cardápio publicado" : "Seu primeiro cardápio"}</h3><p>{published ? "O menu está ativo no Supabase." : "Publique quando estiver pronto."}</p></div><span className={published ? "status-dot live" : "status-dot"}>{published ? "Ativo" : "Rascunho"}</span></div><div className="share-box"><span>◉</span><div><strong>Link público</strong><small>{url || "Faça login para gerar o link."}</small></div><button disabled={!url} onClick={() => { navigator.clipboard?.writeText(url); onAction("Link copiado."); }}>Copiar link</button></div></div></div></div>;
 }
 
 function MenuPage({ published, onPublish, onAction }: { published: boolean; onPublish: () => void; onAction: (message: string) => void }) {
@@ -143,6 +195,23 @@ function PlanPage({ onAction }: { onAction: (message: string) => void }) {
 
 function PlanCard({ name, description, price, features, recommended, onSelect }: { name: string; description: string; price: string; features: string[]; recommended?: boolean; onSelect: () => void }) {
   return <article className={recommended ? "plan-card recommended" : "plan-card"}>{recommended && <span className="recommended-tag">MAIS ESCOLHIDO</span>}<div className="plan-card-top"><span className={`plan-dot ${name.toLowerCase()}`} /><h3>{name}</h3></div><p>{description}</p><div className="plan-price"><strong>{price}</strong><small>/mês</small></div><button className={recommended ? "primary-button" : "outline-button"} onClick={onSelect}>{name === "Silver" ? "Continuar no Silver" : "Escolher " + name} <span>→</span></button><ul>{features.map((feature) => <li key={feature}>✓ {feature}</li>)}</ul></article>;
+}
+
+function RealSettings({ establishment, onEstablishmentChange, onAction, onAdmin }: { establishment: BarFlowEstablishment | null; onEstablishmentChange: (value: BarFlowEstablishment) => void; onAction: (message: string) => void; onAdmin: () => void }) {
+  const [name, setName] = useState(establishment?.name ?? "");
+  const [phone, setPhone] = useState(establishment?.phone ?? "");
+  const [description, setDescription] = useState(establishment?.public_description ?? "");
+  const [busy, setBusy] = useState(false);
+  async function save() {
+    if (!establishment) return onAction("Nenhum estabelecimento real foi encontrado.");
+    setBusy(true);
+    const result = await saveEstablishment(establishment.id, { name, phone, public_description: description });
+    setBusy(false);
+    if (result.error || !result.data) return onAction(result.error?.message ?? "Não foi possível salvar as configurações.");
+    onEstablishmentChange(result.data as BarFlowEstablishment);
+    onAction("Configurações salvas no Supabase.");
+  }
+  return <div><div className="page-heading"><div><p className="eyebrow">CONFIGURAÇÕES</p><h1>Deixe tudo do seu <em>jeito.</em></h1><p className="lead">Dados persistidos no estabelecimento atual.</p></div></div><div className="settings-grid"><div className="panel settings-nav"><button className="selected">Estabelecimento</button><button>Perfil e acesso</button><button>Preferências</button><button onClick={onAdmin}>Painel Bar Flow ↗</button></div><div className="panel settings-form"><div className="panel-heading"><div><h3>Dados do estabelecimento</h3><p>Estas informações aparecem no cardápio público.</p></div></div><label>Nome do estabelecimento<input value={name} onChange={(event) => setName(event.target.value)} /></label><label>Descrição<textarea value={description} onChange={(event) => setDescription(event.target.value)} /></label><label>Telefone<input value={phone} onChange={(event) => setPhone(event.target.value)} /></label><button className="primary-button save-button" disabled={busy} onClick={save}>{busy ? "Salvando..." : "Salvar alterações"}</button></div></div></div>;
 }
 
 function Settings({ onAction, onAdmin }: { onAction: (message: string) => void; onAdmin: () => void }) {
@@ -179,11 +248,14 @@ function AuthScreen({ onLogin, onBack }: { onLogin: () => void; onBack: () => vo
   return <main className="auth-shell"><div className="auth-brand" onClick={onBack}><div className="brand-mark">B</div><strong>bar flow</strong></div><div className="auth-card"><div className="auth-intro"><span className="eyebrow">BEM-VINDO DE VOLTA</span><h1>{recovery ? "Recupere seu acesso." : "Sua operação, mais fluida."}</h1><p>{recovery ? "Informe seu e-mail e enviaremos um link seguro para redefinir sua senha." : "Entre para continuar organizando o bar que você constrói todos os dias."}</p></div>{recovery ? <><label>E-mail profissional<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="voce@seunegocio.com.br" /></label><button className="primary-button auth-submit" onClick={submitRecovery}>Enviar link de recuperação <span>→</span></button><button className="auth-link" onClick={() => setRecovery(false)}>Voltar para o login</button></> : <><button className="google-button" onClick={submitGoogle}><b>G</b> Continuar com Google</button><div className="auth-divider"><span>ou entre com e-mail</span></div><label>E-mail profissional<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="voce@seunegocio.com.br" /></label><label>Senha<div className="password-field"><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Sua senha" /><span>◉</span></div></label><button className="primary-button auth-submit" onClick={submitLogin}>Entrar <span>→</span></button><button className="auth-link" onClick={() => setRecovery(true)}>Esqueci minha senha</button><p className="auth-footer">Ainda não tem uma conta? <button onClick={onLogin}>Comece seu teste grátis</button></p></>}{message && <p className="auth-message">{message}</p>}</div><p className="auth-legal">Ao continuar, você concorda com os Termos de Uso e a Política de Privacidade.</p></main>;
 }
 
-function OnboardingScreen({ onComplete }: { onComplete: () => void }) {
+function OnboardingScreen({ onComplete }: { onComplete: (input: { name: string; city: string; phone: string; segment: string }) => void | Promise<void> }) {
   const [step, setStep] = useState(1);
   const [segment, setSegment] = useState("Bar");
+  const [name, setName] = useState("Casa Caju");
+  const [city, setCity] = useState("São Paulo");
+  const [phone, setPhone] = useState("");
   const segments = ["Bar", "Casa noturna", "Adega", "Restaurante", "Bartender autônomo", "Eventos"];
-  return <main className="onboarding-shell"><div className="onboarding-top"><div className="brand"><div className="brand-mark">B</div><div><strong>bar flow</strong><span>operação de bebidas</span></div></div><span>Etapa {step} de 3</span></div><div className="onboarding-progress"><span style={{ width: `${step * 33.33}%` }} /></div><div className="onboarding-card">{step === 1 && <><span className="step-number">01</span><h1>Vamos começar pelo seu espaço.</h1><p>Conte um pouco sobre o estabelecimento para personalizarmos sua experiência.</p><label>Nome do estabelecimento<input defaultValue="Casa Caju" /></label><div className="form-row"><label>Cidade<input defaultValue="São Paulo" /></label><label>WhatsApp<input placeholder="+55 (11) 00000-0000" /></label></div></>}{step === 2 && <><span className="step-number">02</span><h1>Qual é o seu ritmo?</h1><p>Isso nos ajuda a recomendar receitas e produtos mais relevantes.</p><div className="segment-grid">{segments.map((item) => <button key={item} className={segment === item ? "segment-card selected" : "segment-card"} onClick={() => setSegment(item)}><span>{item === "Bar" ? "◒" : item === "Adega" ? "◇" : item === "Eventos" ? "✦" : "◫"}</span><strong>{item}</strong></button>)}</div></>}{step === 3 && <><span className="step-number">03</span><h1>Uma boa base para começar.</h1><p>Selecionamos alguns itens da Biblioteca Mestre para você revisar e adicionar ao seu acervo.</p><div className="starter-list">{["Gin Tônica da Casa", "Negroni", "Moscow Mule", "Xarope de hibisco"].map((item, index) => <label key={item} className="starter-item"><input type="checkbox" defaultChecked={index < 2} /><span className={`result-dot ${index % 2 ? "wine" : "blue"}`} /><strong>{item}</strong><small>{index === 3 ? "Preparo" : "Receita"} · sugerido para {segment}</small></label>)}</div></>}<div className="onboarding-actions"><button className="ghost-button" onClick={() => step > 1 ? setStep(step - 1) : onComplete()}>{step > 1 ? "Voltar" : "Sair"}</button><button className="primary-button" onClick={() => step < 3 ? setStep(step + 1) : onComplete()}>{step < 3 ? "Continuar" : "Entrar no Bar Flow"} <span>→</span></button></div></div></main>;
+  return <main className="onboarding-shell"><div className="onboarding-top"><div className="brand"><div className="brand-mark">B</div><div><strong>bar flow</strong><span>operação de bebidas</span></div></div><span>Etapa {step} de 3</span></div><div className="onboarding-progress"><span style={{ width: `${step * 33.33}%` }} /></div><div className="onboarding-card">{step === 1 && <><span className="step-number">01</span><h1>Vamos começar pelo seu espaço.</h1><p>Conte um pouco sobre o estabelecimento para personalizarmos sua experiência.</p><label>Nome do estabelecimento<input value={name} onChange={(event) => setName(event.target.value)} /></label><div className="form-row"><label>Cidade<input value={city} onChange={(event) => setCity(event.target.value)} /></label><label>WhatsApp<input value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="+55 (11) 00000-0000" /></label></div></>}{step === 2 && <><span className="step-number">02</span><h1>Qual é o seu ritmo?</h1><p>Isso nos ajuda a recomendar receitas e produtos mais relevantes.</p><div className="segment-grid">{segments.map((item) => <button key={item} className={segment === item ? "segment-card selected" : "segment-card"} onClick={() => setSegment(item)}><span>◒</span><strong>{item}</strong></button>)}</div></>}{step === 3 && <><span className="step-number">03</span><h1>Uma boa base para começar.</h1><p>Selecionamos alguns itens da Biblioteca Mestre para você revisar e adicionar ao seu acervo.</p><div className="starter-list">{["Gin Tônica da Casa", "Negroni", "Moscow Mule", "Xarope de hibisco"].map((item, index) => <label key={item} className="starter-item"><input type="checkbox" defaultChecked={index < 2} /><span className={`result-dot ${index % 2 ? "wine" : "blue"}`} /><strong>{item}</strong><small>{index === 3 ? "Preparo" : "Receita"} · sugerido para {segment}</small></label>)}</div></>}<div className="onboarding-actions"><button className="ghost-button" onClick={() => step > 1 ? setStep(step - 1) : undefined}>{step > 1 ? "Voltar" : "Sair"}</button><button className="primary-button" onClick={() => step < 3 ? setStep(step + 1) : onComplete({ name, city, phone, segment })}>{step < 3 ? "Continuar" : "Entrar no Bar Flow"} <span>→</span></button></div></div></main>;
 }
 
 function RealAdminPanel({ onBack, onAction }: { onBack: () => void; onAction: (message: string) => void }) {
