@@ -110,7 +110,7 @@ export default function Home() {
           {section === "acervo" && <RealCollection establishment={establishment} realItems={realItems} onItemsChange={setRealItems} onAction={notify} />}
           {section === "cardapio" && <RealMenuPage establishment={establishment} published={published} onPublished={() => { setPublished(true); notify("Cardápio publicado com sucesso."); }} onAction={notify} />}
           {section === "favoritos" && <EmptyState title="Seus favoritos" copy="Salve receitas, produtos e páginas importantes para encontrar tudo mais rápido." action="Explorar Biblioteca" onAction={() => setSection("biblioteca")} />}
-          {section === "plano" && <RealBillingPage onAction={notify} />}
+          {section === "plano" && <RealBillingPage onAction={notify} onLogin={() => setMode("login")} />}
           {section === "configuracoes" && <RealSettings establishment={establishment} onEstablishmentChange={setEstablishment} onAction={notify} onAdmin={() => setMode("admin")} />}
         </div>
       </section>
@@ -184,14 +184,17 @@ function MenuPage({ published, onPublish, onAction }: { published: boolean; onPu
 }
 
 /* eslint-disable react-hooks/static-components */
-function RealBillingPage({ onAction }: { onAction: (message: string) => void }) {
+function RealBillingPage({ onAction, onLogin }: { onAction: (message: string) => void; onLogin: () => void }) {
   const [cycle, setCycle] = useState<"monthly" | "annual">("monthly");
   const [busy, setBusy] = useState("");
   async function checkout(plan: "bronze" | "silver" | "gold") {
     setBusy(plan);
     const result = await createBillingCheckout(plan, cycle);
     setBusy("");
-    if (result.error || !result.data) return onAction(result.error?.message ?? "Não foi possível iniciar o checkout.");
+    if (result.error || !result.data) {
+      if (result.error?.message.includes("Sessão")) return onLogin();
+      return onAction(result.error?.message ?? "Não foi possível iniciar o checkout.");
+    }
     window.location.assign(result.data.checkout_url);
   }
   const prices = cycle === "monthly" ? { bronze: "R$ 59,90", silver: "R$ 129,90", gold: "R$ 249,90" } : { bronze: "R$ 610,98", silver: "R$ 1.324,98", gold: "R$ 2.548,98" };

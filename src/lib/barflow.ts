@@ -105,8 +105,9 @@ export async function publishMenu(menuId: string) {
 
 export async function createBillingCheckout(plan: "bronze" | "silver" | "gold", cycle: "monthly" | "annual") {
   if (!supabase) return { data: null, error: unavailable() };
-  const session = await supabase.auth.getSession();
-  if (session.error || !session.data.session) return { data: null, error: session.error ?? new Error("Sessão não encontrada.") };
+  let session = await supabase.auth.getSession();
+  if (!session.data.session) session = await supabase.auth.refreshSession();
+  if (session.error || !session.data.session) return { data: null, error: session.error ?? new Error("Sessão não encontrada. Entre novamente para continuar.") };
   const response = await fetch("/api/billing/checkout", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.data.session.access_token}` }, body: JSON.stringify({ plan, cycle }) });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) return { data: null, error: new Error(data.error ?? "Não foi possível iniciar o checkout.") };
