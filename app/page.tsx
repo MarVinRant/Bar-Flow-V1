@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { fetchAdminSnapshot, requestPasswordReset, signInWithGoogle, signInWithPassword, type AdminSnapshot } from "../src/lib/supabase";
-import { archivePrivateItem, createBillingCheckout, createOnboarding, fetchPrivateItems, getCurrentEstablishment, getOrCreateMenu, publishMenu, saveEstablishment, savePrivateItem, type BarFlowEstablishment, type BarFlowItem } from "../src/lib/barflow";
+import { archivePrivateItem, createBillingCheckout, createOnboarding, fetchPrivateItems, fetchPublishedMasterItems, fetchPublishedMenuItemCount, getCurrentEstablishment, getOrCreateMenu, publishMenu, saveEstablishment, savePrivateItem, type BarFlowEstablishment, type BarFlowItem, type BarFlowMasterItem } from "../src/lib/barflow";
 
 type Section = "visao" | "biblioteca" | "acervo" | "cardapio" | "favoritos" | "plano" | "configuracoes";
 type AppMode = "app" | "login" | "onboarding" | "admin";
@@ -39,13 +39,19 @@ export default function Home() {
   const [mode, setMode] = useState<AppMode>("app");
   const [establishment, setEstablishment] = useState<BarFlowEstablishment | null>(null);
   const [realItems, setRealItems] = useState<BarFlowItem[]>([]);
+  const [masterItems, setMasterItems] = useState<BarFlowMasterItem[]>([]);
+  const [publishedCount, setPublishedCount] = useState(0);
 
   useEffect(() => {
+    fetchPublishedMasterItems().then(({ data }) => { if (data) setMasterItems(data); });
     getCurrentEstablishment().then(async ({ data }) => {
       if (!data) return;
       setEstablishment(data);
       const result = await fetchPrivateItems(data.id);
       if (result.data) setRealItems(result.data);
+      const publishedResult = await fetchPublishedMenuItemCount(data.id);
+      setPublishedCount(publishedResult.data);
+      setPublished(publishedResult.data > 0);
     });
   }, []);
 
@@ -105,8 +111,8 @@ export default function Home() {
         {search && <div className="search-results"><div><strong>Resultados para “{search}”</strong><button onClick={() => setSearch("")}>Fechar</button></div>{results.length ? results.map((item) => <button key={item.name} onClick={() => { setSearch(""); setSection(item.type === "Produto" ? "acervo" : "biblioteca"); }}><span className={`result-dot ${item.tone}`} /><span><strong>{item.name}</strong><small>{item.type} · {item.category}</small></span><b>→</b></button>) : <p>Nenhum resultado encontrado. Tente outro termo.</p>}</div>}
 
         <div className="content">
-          {section === "visao" && <Dashboard onAction={notify} published={published} />}
-          {section === "biblioteca" && <Library onAction={notify} />}
+          {section === "visao" && <Dashboard onAction={notify} realItems={realItems} publishedCount={publishedCount} />}
+          {section === "biblioteca" && <Library onAction={notify} masterItems={masterItems} />}
           {section === "acervo" && <RealCollection establishment={establishment} realItems={realItems} onItemsChange={setRealItems} onAction={notify} />}
           {section === "cardapio" && <RealMenuPage establishment={establishment} published={published} onPublished={() => { setPublished(true); notify("Cardápio publicado com sucesso."); }} onAction={notify} />}
           {section === "favoritos" && <EmptyState title="Seus favoritos" copy="Salve receitas, produtos e páginas importantes para encontrar tudo mais rápido." action="Explorar Biblioteca" onAction={() => setSection("biblioteca")} />}
@@ -119,19 +125,23 @@ export default function Home() {
   );
 }
 
-function Dashboard({ onAction, published }: { onAction: (message: string) => void; published: boolean }) {
+function Dashboard({ onAction, realItems, publishedCount }: { onAction: (message: string) => void; realItems: BarFlowItem[]; publishedCount: number }) {
+  const recipesCount = realItems.filter((item) => item.item_type === "recipe" || item.item_type === "preparation").length;
+  const productsCount = realItems.filter((item) => item.item_type === "product").length;
+  const totalItems = recipesCount + productsCount;
   return <div className="dashboard">
     <div className="page-heading"><div><p className="eyebrow">TERÇA-FEIRA, 04 DE AGOSTO DE 2026</p><h1>Bom dia, Marcos <span>✦</span></h1><p className="lead">Tudo pronto para deixar a operação da Casa Caju mais fluida.</p></div><button className="primary-button" onClick={() => onAction("Escolha o tipo de item que deseja criar.")}>＋ Novo item <span>⌄</span></button></div>
     <div className="hero-banner"><div className="hero-copy"><span className="pill pill-gold">NOVIDADE NA BIBLIOTECA</span><h2>12 novas receitas para<br /><em>inspirar seu próximo menu.</em></h2><p>Descubra combinações selecionadas para a temporada e adicione ao seu acervo.</p><button className="text-button" onClick={() => onAction("Abrindo as novidades da Biblioteca Mestre.")}>Explorar novidades <span>→</span></button></div><div className="hero-orb"><div className="glass glass-one">✧</div><div className="glass glass-two">◌</div><div className="leaf">◢</div></div></div>
     <div className="section-title"><div><h2>Visão da operação</h2><p>Um resumo do que está acontecendo no seu estabelecimento.</p></div><button className="ghost-button" onClick={() => onAction("Período alterado para este mês.")}>Este mês <span>⌄</span></button></div>
-    <div className="metric-grid"><Metric label="Receitas no acervo" value="28" change="+4 este mês" icon="◒" tone="blue" /><Metric label="Produtos cadastrados" value="74" change="+8 este mês" icon="▣" tone="gold" /><Metric label="Itens publicados" value={published ? "12" : "0"} change={published ? "Cardápio ativo" : "Pronto para publicar"} icon="◉" tone="green" /><Metric label="Uso do plano" value="38%" change="74 de 200 itens" icon="◌" tone="purple" /></div>
+    <div className="metric-grid"><Metric label="Receitas no acervo" value={String(recipesCount)} change="Dados do Supabase" icon="◒" tone="blue" /><Metric label="Produtos cadastrados" value={String(productsCount)} change="Dados do Supabase" icon="▣" tone="gold" /><Metric label="Itens publicados" value={String(publishedCount)} change={publishedCount ? "Cardápio ativo" : "Pronto para publicar"} icon="◉" tone="green" /><Metric label="Uso do plano" value={totalItems ? `${Math.min(100, Math.round((totalItems / 200) * 100))}%` : "0%"} change={`${totalItems} de 200 itens`} icon="◌" tone="purple" /></div>
     <div className="lower-grid"><div className="panel"><div className="panel-heading"><div><h3>Atividade recente</h3><p>As últimas movimentações no seu acervo.</p></div><button className="icon-link" onClick={() => onAction("Histórico completo em breve.")}>Ver tudo →</button></div><Activity icon="◒" title="Gin Tônica da Casa" desc="Receita criada por você" time="Hoje, 09:42" tone="blue" /><Activity icon="▣" title="Gin Tanqueray London Dry" desc="Adicionado ao acervo" time="Ontem, 17:18" tone="gold" /><Activity icon="☷" title="Menu de Inverno" desc="Cardápio atualizado" time="Ontem, 14:05" tone="green" /></div><div className="panel quick-panel"><div className="panel-heading"><div><h3>Ações rápidas</h3><p>Comece por onde precisar.</p></div></div><QuickAction icon="＋" label="Criar receita" onClick={() => onAction("Abrindo o formulário de nova receita.")} /><QuickAction icon="▣" label="Adicionar produto" onClick={() => onAction("Abrindo o formulário de novo produto.")} /><QuickAction icon="▱" label="Explorar Biblioteca" onClick={() => onAction("Use o menu Biblioteca para explorar.")} /><QuickAction icon="☷" label="Publicar cardápio" onClick={() => onAction("Use o menu Meu Cardápio para publicar.")} /></div></div>
   </div>;
 }
 
-function Library({ onAction }: { onAction: (message: string) => void }) {
+function Library({ onAction, masterItems }: { onAction: (message: string) => void; masterItems: BarFlowMasterItem[] }) {
   const [tab, setTab] = useState("Tudo");
-  const items = tab === "Tudo" ? [...recipes, ...products] : [...recipes, ...products].filter((item) => item.type === tab.slice(0, -1) || item.category === tab);
+  const sourceItems = masterItems.length ? masterItems.map((item) => ({ name: item.name, category: item.category, time: item.item_type === "recipe" ? "Receita" : item.item_type === "product" ? "Produto" : "Preparo", type: item.item_type === "recipe" ? "Receita" : item.item_type === "product" ? "Produto" : "Preparo", tone: "blue" })) : [...recipes, ...products];
+  const items = tab === "Tudo" ? sourceItems : sourceItems.filter((item) => item.type === tab.slice(0, -1) || item.category === tab);
   return <div><div className="page-heading"><div><p className="eyebrow">BIBLIOTECA MESTRE</p><h1>Encontre seu próximo <em>favorito.</em></h1><p className="lead">Conteúdo curado pelo Bar Flow para você começar com uma base melhor.</p></div><button className="outline-button" onClick={() => onAction("Sugira uma receita ou produto para nossa curadoria.")}>＋ Sugerir item</button></div><div className="library-toolbar"><div className="tabs">{["Tudo", "Receitas", "Produtos", "Preparos"].map((name) => <button key={name} onClick={() => setTab(name)} className={tab === name ? "tab active" : "tab"}>{name}<span>{name === "Tudo" ? "7" : name === "Receitas" ? "4" : name === "Produtos" ? "3" : "1"}</span></button>)}</div><button className="filter-button">☷ Filtros</button></div><div className="library-grid">{items.map((item) => <LibraryCard key={item.name} item={item} onAction={onAction} />)}</div></div>;
 }
 

@@ -35,6 +35,15 @@ export type BarFlowMenu = {
   public_price_visible: boolean;
 };
 
+export type BarFlowMasterItem = {
+  id: string;
+  item_type: BarFlowItem["item_type"];
+  name: string;
+  category: string;
+  description: string | null;
+  status: "draft" | "review" | "published" | "archived";
+};
+
 export type PublicMenuData = {
   establishment: Pick<BarFlowEstablishment, "id" | "name" | "phone" | "public_description" | "public_theme">;
   items: Array<{
@@ -84,6 +93,19 @@ export async function createOnboarding(input: { name: string; city: string; phon
 export async function fetchPrivateItems(establishmentId: string) {
   if (!supabase) return { data: [] as BarFlowItem[], error: unavailable() };
   return supabase.from("private_items").select("*").eq("establishment_id", establishmentId).is("deleted_at", null).order("created_at", { ascending: false }) as unknown as Promise<{ data: BarFlowItem[] | null; error: Error | null }>;
+}
+
+export async function fetchPublishedMasterItems() {
+  if (!supabase) return { data: [] as BarFlowMasterItem[], error: unavailable() };
+  return supabase.from("master_items").select("id,item_type,name,category,description,status").eq("status", "published").order("name") as unknown as Promise<{ data: BarFlowMasterItem[] | null; error: Error | null }>;
+}
+
+export async function fetchPublishedMenuItemCount(establishmentId: string) {
+  if (!supabase) return { data: 0, error: unavailable() };
+  const menu = await supabase.from("menus").select("id").eq("establishment_id", establishmentId).eq("menu_type", "menu").eq("status", "published").limit(1).maybeSingle();
+  if (menu.error || !menu.data) return { data: 0, error: menu.error ?? null };
+  const items = await supabase.from("menu_items").select("id", { count: "exact", head: true }).eq("menu_id", menu.data.id).eq("available", true);
+  return { data: items.count ?? 0, error: items.error };
 }
 
 export async function fetchPublicMenu(slug: string) {
