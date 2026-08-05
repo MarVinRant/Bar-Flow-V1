@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { fetchAdminSnapshot, requestPasswordReset, signInWithGoogle, signInWithPassword, type AdminSnapshot } from "../src/lib/supabase";
-import { archivePrivateItem, createOnboarding, fetchPrivateItems, getCurrentEstablishment, getOrCreateMenu, publishMenu, saveEstablishment, savePrivateItem, type BarFlowEstablishment, type BarFlowItem } from "../src/lib/barflow";
+import { archivePrivateItem, createBillingCheckout, createOnboarding, fetchPrivateItems, getCurrentEstablishment, getOrCreateMenu, publishMenu, saveEstablishment, savePrivateItem, type BarFlowEstablishment, type BarFlowItem } from "../src/lib/barflow";
 
 type Section = "visao" | "biblioteca" | "acervo" | "cardapio" | "favoritos" | "plano" | "configuracoes";
 type AppMode = "app" | "login" | "onboarding" | "admin";
@@ -110,7 +110,7 @@ export default function Home() {
           {section === "acervo" && <RealCollection establishment={establishment} realItems={realItems} onItemsChange={setRealItems} onAction={notify} />}
           {section === "cardapio" && <RealMenuPage establishment={establishment} published={published} onPublished={() => { setPublished(true); notify("Cardápio publicado com sucesso."); }} onAction={notify} />}
           {section === "favoritos" && <EmptyState title="Seus favoritos" copy="Salve receitas, produtos e páginas importantes para encontrar tudo mais rápido." action="Explorar Biblioteca" onAction={() => setSection("biblioteca")} />}
-          {section === "plano" && <FrozenCommercialPage onAction={notify} />}
+          {section === "plano" && <RealBillingPage onAction={notify} />}
           {section === "configuracoes" && <RealSettings establishment={establishment} onEstablishmentChange={setEstablishment} onAction={notify} onAdmin={() => setMode("admin")} />}
         </div>
       </section>
@@ -182,6 +182,23 @@ function RealMenuPage({ establishment, published, onPublished, onAction }: { est
 function MenuPage({ published, onPublish, onAction }: { published: boolean; onPublish: () => void; onAction: (message: string) => void }) {
   return <div><div className="page-heading"><div><p className="eyebrow">MEU CARDÁPIO</p><h1>Apresente a Casa Caju <em>ao mundo.</em></h1><p className="lead">Monte, publique e compartilhe sua seleção em poucos passos.</p></div><button className="primary-button" onClick={onPublish}>{published ? "✓ Publicado" : "Publicar cardápio"} <span>→</span></button></div><div className="menu-editor"><div className="menu-preview"><div className="preview-top"><span>bar flow</span><span>•••</span></div><div className="preview-hero"><p>CASA CAJU</p><h2>Drinks que<br /><em>contam histórias.</em></h2><small>Uma seleção autoral para noites leves e encontros longos.</small></div><div className="preview-list"><span>DESTAQUES</span><strong>Gin Tônica da Casa <b>R$ 32</b></strong><strong>Negroni <b>R$ 35</b></strong><strong>Moscow Mule <b>R$ 34</b></strong></div></div><div className="menu-settings"><div className="panel-heading"><div><h3>{published ? "Cardápio publicado" : "Seu primeiro cardápio"}</h3><p>{published ? "Casa Caju já está disponível para seus clientes." : "Ajuste os detalhes antes de publicar."}</p></div><span className={published ? "status-dot live" : "status-dot"}>{published ? "Ativo" : "Rascunho"}</span></div><SettingRow label="Nome público" value="Casa Caju" /><SettingRow label="Endereço" value="barflow.app/casa-caju" /><SettingRow label="Aparência" value="Tema claro · Editar" /><div className="share-box"><span>◉</span><div><strong>Compartilhe com seus clientes</strong><small>Copie o link ou gere um QR Code para sua mesa.</small></div><button onClick={() => onAction("Link copiado para a área de transferência.")}>Copiar link</button></div></div></div></div>;
 }
+
+/* eslint-disable react-hooks/static-components */
+function RealBillingPage({ onAction }: { onAction: (message: string) => void }) {
+  const [cycle, setCycle] = useState<"monthly" | "annual">("monthly");
+  const [busy, setBusy] = useState("");
+  async function checkout(plan: "bronze" | "silver" | "gold") {
+    setBusy(plan);
+    const result = await createBillingCheckout(plan, cycle);
+    setBusy("");
+    if (result.error || !result.data) return onAction(result.error?.message ?? "Não foi possível iniciar o checkout.");
+    window.location.assign(result.data.checkout_url);
+  }
+  const prices = cycle === "monthly" ? { bronze: "R$ 59,90", silver: "R$ 129,90", gold: "R$ 249,90" } : { bronze: "R$ 610,98", silver: "R$ 1.324,98", gold: "R$ 2.548,98" };
+  const Plan = ({ name, slug, description, features }: { name: string; slug: "bronze" | "silver" | "gold"; description: string; features: string[] }) => <article className={`plan-card ${slug === "silver" ? "recommended" : ""}`}><div className="plan-card-top"><span className={`plan-dot ${slug}`} /><h3>{name}</h3></div><p>{description}</p><div className="plan-price"><strong>{prices[slug]}</strong><small>/{cycle === "monthly" ? "mês" : "ano"}</small></div><button className={slug === "silver" ? "primary-button" : "outline-button"} disabled={busy !== ""} onClick={() => checkout(slug)}>{busy === slug ? "Abrindo..." : `Assinar ${name}`} <span>→</span></button><ul>{features.map((feature) => <li key={feature}>✓ {feature}</li>)}</ul></article>;
+  return <div><div className="page-heading"><div><p className="eyebrow">PLANO E COBRANÇA</p><h1>Escolha o ritmo do seu <em>crescimento.</em></h1><p className="lead">Assinatura segura pelo Mercado Pago. O acesso é atualizado após a confirmação do webhook.</p></div><div className="billing-cycle"><button className={cycle === "monthly" ? "active" : ""} onClick={() => setCycle("monthly")}>Mensal</button><button className={cycle === "annual" ? "active" : ""} onClick={() => setCycle("annual")}>Anual <span>-15%</span></button></div></div><div className="trial-banner"><div><span className="pill pill-gold">MERCADO PAGO</span><h2>Cartão e pagamento seguro no checkout.</h2><p>Você será redirecionado ao ambiente do Mercado Pago para concluir a assinatura.</p></div></div><div className="plan-grid"><Plan name="Bronze" slug="bronze" description="Para começar a organizar a operação." features={["100 receitas próprias", "200 produtos", "1 usuário proprietário", "1 cardápio publicado", "Biblioteca Mestre"]} /><Plan name="Silver" slug="silver" description="Para operações em crescimento." features={["Até 5 usuários", "Receitas e produtos ampliados", "Perfis de equipe fixos", "Cardápios publicados", "Exportação CSV e JSON"]} /><Plan name="Gold" slug="gold" description="Para negócios que querem mais controle." features={["Até 30 usuários", "Permissões personalizadas", "Logo e cores próprias", "Estrutura multiunidade", "Suporte prioritário"]} /></div><div className="panel billing-history"><div className="panel-heading"><div><h3>Histórico de cobrança</h3><p>O status da assinatura aparecerá aqui após o retorno do Mercado Pago.</p></div><span className="status-dot">Aguardando assinatura</span></div></div></div>;
+}
+/* eslint-enable react-hooks/static-components */
 
 function FrozenCommercialPage({ onAction }: { onAction: (message: string) => void }) {
   return <div><div className="page-heading"><div><p className="eyebrow">PLANO E COBRANÇA</p><h1>Área comercial <em>em preparação.</em></h1><p className="lead">A V1 está liberada para uso sem cobrança ativa. Os valores exibidos em materiais anteriores são apenas placeholders.</p></div></div><div className="panel admin-notice"><h3>Cobrança desativada na V1</h3><p>Mercado Pago, assinaturas, teste gratuito, inadimplência, cancelamento e reativação continuam congelados até a aprovação comercial final.</p><p>Referências futuras: Bronze R$ 59,90/mês, Silver R$ 129,90/mês e Gold R$ 249,90/mês, ainda sem validade comercial.</p><button className="outline-button" onClick={() => onAction("A cobrança permanece congelada na V1.")}>Entendi</button></div></div>;

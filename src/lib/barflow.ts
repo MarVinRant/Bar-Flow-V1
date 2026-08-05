@@ -102,3 +102,13 @@ export async function publishMenu(menuId: string) {
   if (!supabase) return { data: null, error: unavailable() };
   return supabase.from("menus").update({ status: "published" }).eq("id", menuId).select("*").single();
 }
+
+export async function createBillingCheckout(plan: "bronze" | "silver" | "gold", cycle: "monthly" | "annual") {
+  if (!supabase) return { data: null, error: unavailable() };
+  const session = await supabase.auth.getSession();
+  if (session.error || !session.data.session) return { data: null, error: session.error ?? new Error("Sessão não encontrada.") };
+  const response = await fetch("/api/billing/checkout", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.data.session.access_token}` }, body: JSON.stringify({ plan, cycle }) });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) return { data: null, error: new Error(data.error ?? "Não foi possível iniciar o checkout.") };
+  return { data: data as { checkout_url: string; subscription: { id: string; status: string } }, error: null };
+}
