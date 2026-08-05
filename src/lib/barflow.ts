@@ -224,6 +224,6 @@ export async function createBillingCheckout(plan: "bronze" | "silver" | "gold", 
   if (session.error || !session.data.session) return { data: null, error: session.error ?? new Error("Sessão não encontrada. Entre novamente para continuar.") };
   const response = await fetch("/api/billing/checkout", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.data.session.access_token}` }, body: JSON.stringify({ plan, cycle }) });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) return { data: null, error: new Error(data.error ?? "Não foi possível iniciar o checkout.") };
+  if (!response.ok) return { data: null, error: new Error(data.detail ? `${data.error ?? "Não foi possível iniciar o checkout."} (${data.detail})` : data.error ?? "Não foi possível iniciar o checkout.") };
   return { data: data as { checkout_url: string; subscription: { id: string; status: string } }, error: null };
 }

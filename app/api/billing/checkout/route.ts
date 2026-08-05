@@ -49,9 +49,15 @@ export async function POST(request: NextRequest) {
 
   const mercadoPagoResponse = await fetch(`${MP_API}/preapproval`, { method: "POST", headers: { Authorization: `Bearer ${config.token}`, "Content-Type": "application/json" }, body: JSON.stringify(payload) });
   const mercadoPagoData = await mercadoPagoResponse.json().catch(() => ({}));
-  if (!mercadoPagoResponse.ok || !mercadoPagoData.init_point) return NextResponse.json({ error: "O Mercado Pago não conseguiu criar o checkout.", detail: mercadoPagoData.message ?? mercadoPagoData.error }, { status: 502 });
+  if (!mercadoPagoResponse.ok || !mercadoPagoData.init_point) {
+    console.error("Mercado Pago checkout failed", { status: mercadoPagoResponse.status, error: mercadoPagoData.error, message: mercadoPagoData.message, cause: mercadoPagoData.cause });
+    return NextResponse.json({ error: "O Mercado Pago não conseguiu criar o checkout.", detail: mercadoPagoData.message ?? mercadoPagoData.error ?? mercadoPagoData.cause?.[0]?.description ?? `HTTP ${mercadoPagoResponse.status}` }, { status: 502 });
+  }
 
   const subscription = await userClient.from("subscriptions").insert({ group_id: membership.data.group_id, establishment_id: membership.data.establishment_id, user_id: user.data.user.id, plan_slug: plan, billing_cycle: cycle, mercado_pago_preapproval_id: mercadoPagoData.id, external_reference: externalReference, status: mercadoPagoData.status ?? "pending" }).select("id,plan_slug,billing_cycle,status,mercado_pago_preapproval_id").single();
-  if (subscription.error) return NextResponse.json({ error: "Checkout criado, mas não foi possível registrar a assinatura local.", checkout_url: mercadoPagoData.init_point }, { status: 502 });
+  if (subscription.error) {
+    console.error("Local subscription registration failed", { code: subscription.error.code, message: subscription.error.message, details: subscription.error.details, hint: subscription.error.hint });
+    return NextResponse.json({ error: "Checkout criado, mas não foi possível registrar a assinatura local.", detail: subscription.error.message, checkout_url: mercadoPagoData.init_point }, { status: 502 });
+  }
   return NextResponse.json({ checkout_url: mercadoPagoData.init_point, subscription: subscription.data });
 }
