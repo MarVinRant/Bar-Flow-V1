@@ -81,6 +81,17 @@ export async function createOnboarding(input: { name: string; city: string; phon
   if (userError || !userResult.user) return { data: null, error: userError ?? new Error("Sessão não encontrada.") };
   const existing = await getCurrentEstablishment();
   if (existing.data) return { data: existing.data, error: null };
+  const ownedGroup = await supabase.from("business_groups").select("id").eq("owner_id", userResult.user.id).order("created_at", { ascending: true }).limit(1).maybeSingle();
+  if (ownedGroup.error) return { data: null, error: ownedGroup.error };
+  if (ownedGroup.data) {
+    const ownedEstablishment = await supabase.from("establishments").select("*").eq("group_id", ownedGroup.data.id).is("deleted_at", null).order("created_at", { ascending: true }).limit(1).maybeSingle();
+    if (ownedEstablishment.error) return { data: null, error: ownedEstablishment.error };
+    if (ownedEstablishment.data) {
+      const membership = await supabase.from("memberships").upsert({ user_id: userResult.user.id, group_id: ownedGroup.data.id, establishment_id: ownedEstablishment.data.id, role: "owner", status: "active" }, { onConflict: "user_id,group_id,establishment_id" });
+      if (membership.error) return { data: null, error: membership.error };
+      return { data: ownedEstablishment.data as BarFlowEstablishment, error: null };
+    }
+  }
   const slugBase = input.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
   const slug = `${slugBase || "estabelecimento"}-${userResult.user.id.slice(0, 6)}`;
   const group = await supabase.from("business_groups").insert({ name: input.name, owner_id: userResult.user.id }).select("id").single();
