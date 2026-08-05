@@ -35,6 +35,17 @@ export type BarFlowMenu = {
   public_price_visible: boolean;
 };
 
+export type PublicMenuData = {
+  establishment: Pick<BarFlowEstablishment, "id" | "name" | "phone" | "public_description" | "public_theme">;
+  items: Array<{
+    id: string;
+    name: string;
+    description: string | null;
+    item_type: BarFlowItem["item_type"];
+    public_price: number | null;
+  }>;
+};
+
 function unavailable() {
   return new Error("Supabase não configurado.");
 }
@@ -73,6 +84,54 @@ export async function createOnboarding(input: { name: string; city: string; phon
 export async function fetchPrivateItems(establishmentId: string) {
   if (!supabase) return { data: [] as BarFlowItem[], error: unavailable() };
   return supabase.from("private_items").select("*").eq("establishment_id", establishmentId).is("deleted_at", null).order("created_at", { ascending: false }) as unknown as Promise<{ data: BarFlowItem[] | null; error: Error | null }>;
+}
+
+export async function fetchPublicMenu(slug: string) {
+  if (!supabase) return { data: null as PublicMenuData | null, error: unavailable() };
+  const establishmentResult = await supabase
+    .from("establishments")
+    .select("id,name,phone,public_description,public_theme")
+    .eq("slug", slug)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (establishmentResult.error || !establishmentResult.data) {
+    return { data: null, error: establishmentResult.error ?? new Error("Cardápio não encontrado.") };
+  }
+
+  const menuResult = await supabase
+    .from("menus")
+    .select("id")
+    .eq("establishment_id", establishmentResult.data.id)
+    .eq("menu_type", "menu")
+    .eq("status", "published")
+    .limit(1)
+    .maybeSingle();
+  if (menuResult.error) return { data: null, error: menuResult.error };
+  if (!menuResult.data) return { data: { establishment: establishmentResult.data, items: [] }, error: null };
+
+  const itemsResult = await supabase
+    .from("menu_items")
+    .select("id,public_price,sort_order,private_items(id,name,description,item_type)")
+    .eq("menu_id", menuResult.data.id)
+    .eq("available", true)
+    .order("sort_order", { ascending: true });
+  if (itemsResult.error) return { data: null, error: itemsResult.error };
+
+  type PublicItemRow = {
+    id: string;
+    public_price: number | null;
+    private_items: { id: string; name: string; description: string | null; item_type: BarFlowItem["item_type"] } | null;
+  };
+  const items = ((itemsResult.data ?? []) as PublicItemRow[])
+    .filter((row) => row.private_items)
+    .map((row) => ({
+      id: row.id,
+      name: row.private_items?.name ?? "",
+      description: row.private_items?.description ?? null,
+      item_type: row.private_items?.item_type ?? "recipe",
+      public_price: row.public_price,
+    }));
+  return { data: { establishment: establishmentResult.data, items }, error: null };
 }
 
 export async function savePrivateItem(input: { id?: string; establishment_id: string; item_type: BarFlowItem["item_type"]; name: string; category: string; description?: string; payload?: Record<string, unknown> }) {
