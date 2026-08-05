@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { fetchAdminSnapshot, requestPasswordReset, signInWithGoogle, signInWithPassword, type AdminSnapshot } from "../src/lib/supabase";
+import { fetchAdminSnapshot, requestPasswordReset, signInWithGoogle, signInWithPassword, signUpWithPassword, type AdminSnapshot } from "../src/lib/supabase";
 import { archivePrivateItem, createBillingCheckout, createOnboarding, fetchPrivateItems, fetchPublishedMasterItems, fetchPublishedMenuItemCount, getCurrentEstablishment, getOrCreateMenu, publishMenu, saveEstablishment, savePrivateItem, type BarFlowEstablishment, type BarFlowItem, type BarFlowMasterItem } from "../src/lib/barflow";
 
 type Section = "visao" | "biblioteca" | "acervo" | "cardapio" | "favoritos" | "plano" | "configuracoes";
@@ -37,6 +37,7 @@ export default function Home() {
   const [toast, setToast] = useState("");
   const [published, setPublished] = useState(false);
   const [mode, setMode] = useState<AppMode>("app");
+  const [authChecked, setAuthChecked] = useState(false);
   const [establishment, setEstablishment] = useState<BarFlowEstablishment | null>(null);
   const [realItems, setRealItems] = useState<BarFlowItem[]>([]);
   const [masterItems, setMasterItems] = useState<BarFlowMasterItem[]>([]);
@@ -45,14 +46,14 @@ export default function Home() {
   useEffect(() => {
     fetchPublishedMasterItems().then(({ data }) => { if (data) setMasterItems(data); });
     getCurrentEstablishment().then(async ({ data }) => {
-      if (!data) return;
+      if (!data) { setMode("login"); return; }
       setEstablishment(data);
       const result = await fetchPrivateItems(data.id);
       if (result.data) setRealItems(result.data);
       const publishedResult = await fetchPublishedMenuItemCount(data.id);
       setPublishedCount(publishedResult.data);
       setPublished(publishedResult.data > 0);
-    });
+    }).finally(() => setAuthChecked(true));
   }, []);
 
   const allItems = useMemo(() => [...recipes, ...products], []);
@@ -66,8 +67,20 @@ export default function Home() {
     window.setTimeout(() => setToast(""), 2600);
   }
 
-  if (mode === "login") return <AuthScreen onLogin={() => setMode("onboarding")} onBack={() => setMode("app")} />;
-  if (mode === "onboarding") return <OnboardingScreen onComplete={async (input) => { const result = await createOnboarding(input); if (result.error || !result.data) return notify(result.error?.message ?? "Não foi possível criar o estabelecimento."); setEstablishment(result.data); setMode("app"); notify("Estabelecimento criado com sucesso."); }} />;
+  async function continueAfterAuth() {
+    const current = await getCurrentEstablishment();
+    if (current.data) {
+      setEstablishment(current.data);
+      const items = await fetchPrivateItems(current.data.id);
+      if (items.data) setRealItems(items.data);
+      setMode("app");
+    } else {
+      setMode("onboarding");
+    }
+  }
+  if (!authChecked) return <main className="auth-shell"><div className="auth-card"><p>Carregando seu espaço...</p></div></main>;
+  if (mode === "login") return <AuthScreen onAuthenticated={continueAfterAuth} onBack={() => setMode("app")} />;
+  if (mode === "onboarding") return <OnboardingScreen onComplete={async (input) => { const result = await createOnboarding(input); if (result.error || !result.data) return notify(result.error?.message ?? "Não foi possível concluir o cadastro."); setEstablishment(result.data); const items = await fetchPrivateItems(result.data.id); if (items.data) setRealItems(items.data); setMode("app"); notify("Estabelecimento criado com sucesso."); }} />;
   if (mode === "admin") return <RealAdminPanel onBack={() => setMode("app")} onAction={notify} />;
 
   return (
@@ -91,7 +104,7 @@ export default function Home() {
           ))}
         </nav>
         <div className="sidebar-bottom">
-          <div className="trial-card"><div className="trial-top"><span>Plano Silver</span><span>5 dias</span></div><div className="progress"><span /></div><small>Seu teste termina em 5 dias</small><button onClick={() => notify("A área de planos estará disponível em breve.")}>Ver planos <b>→</b></button></div>
+          <div className="trial-card"><div className="trial-top"><span>Acesso V1</span><span>Ativo</span></div><div className="progress"><span /></div><small>Seu espaço está pronto para operar.</small><button onClick={() => setSection("plano")}>Ver planos <b>→</b></button></div>
           <button className="help-link" onClick={() => notify("Central de ajuda em breve.")}><i>?</i> Central de ajuda</button>
           <div className="user-row"><div className="avatar avatar-small">MR</div><div><strong>Marcos R.</strong><small>Proprietário</small></div><button aria-label="Mais opções">•••</button></div>
         </div>
@@ -255,15 +268,22 @@ function LibraryCard({ item, onAction }: { item: { name: string; category: strin
 function EmptyState({ title, copy, action, onAction }: { title: string; copy: string; action: string; onAction: () => void }) { return <div className="empty-state"><span>☆</span><h2>{title}</h2><p>{copy}</p><button className="primary-button" onClick={onAction}>{action} →</button></div>; }
 function SettingRow({ label, value }: { label: string; value: string }) { return <div className="setting-row"><span>{label}</span><strong>{value}</strong><button>Editar</button></div>; }
 
-function AuthScreen({ onLogin, onBack }: { onLogin: () => void; onBack: () => void }) {
+function AuthScreen({ onAuthenticated, onBack }: { onAuthenticated: () => void | Promise<void>; onBack: () => void }) {
   const [recovery, setRecovery] = useState(false);
+  const [signup, setSignup] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
   async function submitLogin() {
     const result = await signInWithPassword(email, password);
     if (result.error && !result.error.message.includes("modo demonstração")) { setMessage(result.error.message); return; }
-    onLogin();
+    await onAuthenticated();
+  }
+  async function submitSignup() {
+    const result = await signUpWithPassword(email, password);
+    if (result.error) { setMessage(result.error.message); return; }
+    if (result.data.session) { await onAuthenticated(); return; }
+    setMessage("Conta criada. Confirme seu e-mail para continuar.");
   }
   async function submitRecovery() {
     const result = await requestPasswordReset(email);
@@ -273,19 +293,20 @@ function AuthScreen({ onLogin, onBack }: { onLogin: () => void; onBack: () => vo
   async function submitGoogle() {
     const result = await signInWithGoogle();
     if (result.error && !result.error.message.includes("modo demonstração")) { setMessage(result.error.message); return; }
-    onLogin();
+    setMessage("Redirecionando para o Google...");
   }
-  return <main className="auth-shell"><div className="auth-brand" onClick={onBack}><div className="brand-mark">B</div><strong>bar flow</strong></div><div className="auth-card"><div className="auth-intro"><span className="eyebrow">BEM-VINDO DE VOLTA</span><h1>{recovery ? "Recupere seu acesso." : "Sua operação, mais fluida."}</h1><p>{recovery ? "Informe seu e-mail e enviaremos um link seguro para redefinir sua senha." : "Entre para continuar organizando o bar que você constrói todos os dias."}</p></div>{recovery ? <><label>E-mail profissional<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="voce@seunegocio.com.br" /></label><button className="primary-button auth-submit" onClick={submitRecovery}>Enviar link de recuperação <span>→</span></button><button className="auth-link" onClick={() => setRecovery(false)}>Voltar para o login</button></> : <><button className="google-button" onClick={submitGoogle}><b>G</b> Continuar com Google</button><div className="auth-divider"><span>ou entre com e-mail</span></div><label>E-mail profissional<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="voce@seunegocio.com.br" /></label><label>Senha<div className="password-field"><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Sua senha" /><span>◉</span></div></label><button className="primary-button auth-submit" onClick={submitLogin}>Entrar <span>→</span></button><button className="auth-link" onClick={() => setRecovery(true)}>Esqueci minha senha</button><p className="auth-footer">Ainda não tem uma conta? <button onClick={onLogin}>Comece seu teste grátis</button></p></>}{message && <p className="auth-message">{message}</p>}</div><p className="auth-legal">Ao continuar, você concorda com os Termos de Uso e a Política de Privacidade.</p></main>;
+  return <main className="auth-shell"><div className="auth-brand" onClick={onBack}><div className="brand-mark">B</div><strong>bar flow</strong></div><div className="auth-card"><div className="auth-intro"><span className="eyebrow">{signup ? "CRIAR CONTA" : "BEM-VINDO DE VOLTA"}</span><h1>{recovery ? "Recupere seu acesso." : signup ? "Comece a organizar seu espaço." : "Sua operação, mais fluida."}</h1><p>{recovery ? "Informe seu e-mail e enviaremos um link seguro para redefinir sua senha." : signup ? "Crie sua conta e configure o estabelecimento em poucos passos." : "Entre para continuar organizando o bar que você constrói todos os dias."}</p></div>{recovery ? <><label>E-mail profissional<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="voce@seunegocio.com.br" /></label><button className="primary-button auth-submit" onClick={submitRecovery}>Enviar link de recuperação <span>→</span></button><button className="auth-link" onClick={() => setRecovery(false)}>Voltar para o login</button></> : <><button className="google-button" onClick={submitGoogle}><b>G</b> Continuar com Google</button><div className="auth-divider"><span>ou entre com e-mail</span></div><label>E-mail profissional<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="voce@seunegocio.com.br" /></label><label>Senha<div className="password-field"><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Sua senha" /><span>◉</span></div></label><button className="primary-button auth-submit" onClick={signup ? submitSignup : submitLogin}>{signup ? "Criar conta" : "Entrar"} <span>→</span></button>{!signup && <button className="auth-link" onClick={() => setRecovery(true)}>Esqueci minha senha</button>}<p className="auth-footer">{signup ? "Já tem uma conta?" : "Ainda não tem uma conta?"} <button onClick={() => { setSignup(!signup); setMessage(""); }}>{signup ? "Entrar" : "Criar conta"}</button></p></>}{message && <p className="auth-message">{message}</p>}</div><p className="auth-legal">Ao continuar, você concorda com os Termos de Uso e a Política de Privacidade.</p></main>;
 }
 
-function OnboardingScreen({ onComplete }: { onComplete: (input: { name: string; city: string; phone: string; segment: string }) => void | Promise<void> }) {
+function OnboardingScreen({ onComplete }: { onComplete: (input: { name: string; city: string; phone: string; segment: string; starterNames: string[] }) => void | Promise<void> }) {
   const [step, setStep] = useState(1);
   const [segment, setSegment] = useState("Bar");
   const [name, setName] = useState("Casa Caju");
   const [city, setCity] = useState("São Paulo");
   const [phone, setPhone] = useState("");
+  const [starterNames, setStarterNames] = useState(["Gin Tônica da Casa", "Negroni"]);
   const segments = ["Bar", "Casa noturna", "Adega", "Restaurante", "Bartender autônomo", "Eventos"];
-  return <main className="onboarding-shell"><div className="onboarding-top"><div className="brand"><div className="brand-mark">B</div><div><strong>bar flow</strong><span>operação de bebidas</span></div></div><span>Etapa {step} de 3</span></div><div className="onboarding-progress"><span style={{ width: `${step * 33.33}%` }} /></div><div className="onboarding-card">{step === 1 && <><span className="step-number">01</span><h1>Vamos começar pelo seu espaço.</h1><p>Conte um pouco sobre o estabelecimento para personalizarmos sua experiência.</p><label>Nome do estabelecimento<input value={name} onChange={(event) => setName(event.target.value)} /></label><div className="form-row"><label>Cidade<input value={city} onChange={(event) => setCity(event.target.value)} /></label><label>WhatsApp<input value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="+55 (11) 00000-0000" /></label></div></>}{step === 2 && <><span className="step-number">02</span><h1>Qual é o seu ritmo?</h1><p>Isso nos ajuda a recomendar receitas e produtos mais relevantes.</p><div className="segment-grid">{segments.map((item) => <button key={item} className={segment === item ? "segment-card selected" : "segment-card"} onClick={() => setSegment(item)}><span>◒</span><strong>{item}</strong></button>)}</div></>}{step === 3 && <><span className="step-number">03</span><h1>Uma boa base para começar.</h1><p>Selecionamos alguns itens da Biblioteca Mestre para você revisar e adicionar ao seu acervo.</p><div className="starter-list">{["Gin Tônica da Casa", "Negroni", "Moscow Mule", "Xarope de hibisco"].map((item, index) => <label key={item} className="starter-item"><input type="checkbox" defaultChecked={index < 2} /><span className={`result-dot ${index % 2 ? "wine" : "blue"}`} /><strong>{item}</strong><small>{index === 3 ? "Preparo" : "Receita"} · sugerido para {segment}</small></label>)}</div></>}<div className="onboarding-actions"><button className="ghost-button" onClick={() => step > 1 ? setStep(step - 1) : undefined}>{step > 1 ? "Voltar" : "Sair"}</button><button className="primary-button" onClick={() => step < 3 ? setStep(step + 1) : onComplete({ name, city, phone, segment })}>{step < 3 ? "Continuar" : "Entrar no Bar Flow"} <span>→</span></button></div></div></main>;
+  return <main className="onboarding-shell"><div className="onboarding-top"><div className="brand"><div className="brand-mark">B</div><div><strong>bar flow</strong><span>operação de bebidas</span></div></div><span>Etapa {step} de 3</span></div><div className="onboarding-progress"><span style={{ width: `${step * 33.33}%` }} /></div><div className="onboarding-card">{step === 1 && <><span className="step-number">01</span><h1>Vamos começar pelo seu espaço.</h1><p>Conte um pouco sobre o estabelecimento para personalizarmos sua experiência.</p><label>Nome do estabelecimento<input value={name} onChange={(event) => setName(event.target.value)} /></label><div className="form-row"><label>Cidade<input value={city} onChange={(event) => setCity(event.target.value)} /></label><label>WhatsApp<input value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="+55 (11) 00000-0000" /></label></div></>}{step === 2 && <><span className="step-number">02</span><h1>Qual é o seu ritmo?</h1><p>Isso nos ajuda a recomendar receitas e produtos mais relevantes.</p><div className="segment-grid">{segments.map((item) => <button key={item} className={segment === item ? "segment-card selected" : "segment-card"} onClick={() => setSegment(item)}><span>◒</span><strong>{item}</strong></button>)}</div></>}{step === 3 && <><span className="step-number">03</span><h1>Prepare seu espaço.</h1><p>Escolha os itens iniciais que já devem aparecer no seu acervo.</p><div className="starter-list">{["Gin Tônica da Casa", "Negroni", "Moscow Mule", "Xarope de hibisco"].map((item, index) => <label key={item} className="starter-item"><input type="checkbox" checked={starterNames.includes(item)} onChange={(event) => setStarterNames((current) => event.target.checked ? [...current, item] : current.filter((name) => name !== item))} /><span className={`result-dot ${index % 2 ? "wine" : "blue"}`} /><strong>{item}</strong><small>{index === 3 ? "Preparo" : "Receita"} · sugerido para {segment}</small></label>)}</div></>}<div className="onboarding-actions"><button className="ghost-button" onClick={() => step > 1 ? setStep(step - 1) : undefined}>{step > 1 ? "Voltar" : "Sair"}</button><button className="primary-button" onClick={() => step < 3 ? setStep(step + 1) : onComplete({ name, city, phone, segment, starterNames })}>{step < 3 ? "Continuar" : "Entrar no Bar Flow"} <span>→</span></button></div></div></main>;
 }
 
 function RealAdminPanel({ onBack, onAction }: { onBack: () => void; onAction: (message: string) => void }) {

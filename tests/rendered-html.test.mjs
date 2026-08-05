@@ -10,16 +10,14 @@ async function render() {
   }, { waitUntil() {}, passThroughOnException() {} });
 }
 
-test("server-renders the Bar Flow dashboard", async () => {
+test("server-renders the authenticated entry point", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html/i);
   const html = await response.text();
   assert.match(html, /Bar Flow/);
-  assert.match(html, /Visão geral/);
-  assert.match(html, /Biblioteca/);
-  assert.match(html, /Casa Caju/);
-  assert.match(html, /Bom dia, Marcos/);
+  assert.match(html, /auth-shell/);
+  assert.match(html, /Carregando seu espa/);
   assert.doesNotMatch(html, /Your site is taking shape|codex-preview/i);
 });
 

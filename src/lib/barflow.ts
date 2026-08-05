@@ -75,10 +75,12 @@ export async function getCurrentEstablishment() {
   return { data: (establishment as BarFlowEstablishment | null) ?? null, error };
 }
 
-export async function createOnboarding(input: { name: string; city: string; phone: string; segment: string }) {
+export async function createOnboarding(input: { name: string; city: string; phone: string; segment: string; starterNames?: string[] }) {
   if (!supabase) return { data: null, error: unavailable() };
   const { data: userResult, error: userError } = await supabase.auth.getUser();
   if (userError || !userResult.user) return { data: null, error: userError ?? new Error("Sessão não encontrada.") };
+  const existing = await getCurrentEstablishment();
+  if (existing.data) return { data: existing.data, error: null };
   const slugBase = input.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
   const slug = `${slugBase || "estabelecimento"}-${userResult.user.id.slice(0, 6)}`;
   const group = await supabase.from("business_groups").insert({ name: input.name, owner_id: userResult.user.id }).select("id").single();
@@ -87,6 +89,26 @@ export async function createOnboarding(input: { name: string; city: string; phon
   if (establishment.error || !establishment.data) return { data: null, error: establishment.error ?? new Error("Não foi possível criar o estabelecimento.") };
   const membership = await supabase.from("memberships").insert({ user_id: userResult.user.id, group_id: group.data.id, establishment_id: establishment.data.id, role: "owner", status: "active" });
   if (membership.error) return { data: null, error: membership.error };
+  const menu = await getOrCreateMenu(establishment.data.id);
+  if (menu.error) return { data: null, error: menu.error };
+  const starterNames = input.starterNames ?? ["Gin Tônica da Casa", "Negroni"];
+  if (starterNames.length) {
+    const master = await supabase.from("master_items").select("id,item_type,name,category,description,payload").eq("status", "published").in("name", starterNames);
+    if (master.error) return { data: null, error: master.error };
+    if (master.data?.length) {
+      const privateItems = await supabase.from("private_items").insert(master.data.map((item) => ({
+        establishment_id: establishment.data.id,
+        source_master_id: item.id,
+        item_type: item.item_type,
+        name: item.name,
+        category: item.category,
+        description: item.description,
+        payload: item.payload ?? {},
+        created_by: userResult.user.id,
+      }))).select("*");
+      if (privateItems.error) return { data: null, error: privateItems.error };
+    }
+  }
   return { data: establishment.data as BarFlowEstablishment, error: null };
 }
 
