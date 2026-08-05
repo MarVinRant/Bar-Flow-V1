@@ -1,5 +1,14 @@
 # Status do projeto
 
+## Varredura de publicaÃ§Ã£o â€” 05/08/2026
+
+- RepositÃ³rio confirmado no Vercel: `MarVinRant/Bar-Flow-V1`, branch `main`.
+- VariÃ¡veis `VITE_SUPABASE_URL` e `VITE_SUPABASE_PUBLISHABLE_KEY` cadastradas nos ambientes Production e Preview.
+- O deploy pÃºblico ainda estava apontando para a versÃ£o antiga (`aa8c3e4`); Ã© necessÃ¡rio um novo commit/deploy para publicar o cÃ³digo V1 (`aa8840e`).
+- A URL pÃºblica ainda entregava o HTML antigo durante a varredura; nenhum segredo foi exposto.
+- Supabase confirmado com 8 tabelas pÃºblicas, RLS habilitado em todas, 3 migrations aplicadas e advisors de seguranÃ§a sem alertas.
+- Advisors de performance retornam apenas recomendaÃ§Ãµes informativas de Ã­ndices/polÃ­ticas, sem bloqueio de publicaÃ§Ã£o.
+
 ## Estado
 
 Planejamento funcional, comercial, UX, arquitetura conceitual, segurança, painel administrativo e critérios de entrega: aprovados/congelados na conversa de referência.
